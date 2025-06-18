@@ -6,6 +6,7 @@ import javafx.stage.FileChooser;
 import javafx.scene.Scene;
 import javafx.scene.layout.VBox;
 import javafx.scene.control.*;
+import javafx.scene.paint.Color;
 import javafx.geometry.Insets;
 
 import java.io.File;
@@ -31,23 +32,25 @@ public class ResumeMatchApp extends Application {
         Button chooseResumeBtn = new Button("Choose Resume PDF");
         Button chooseJobBtn = new Button("Choose Job Description PDF");
         Button compareBtn = new Button("Compare");
-        
+
+        resultLabel = new Label("Match Score: --");
+        resultLabel.setStyle("-fx-font-size: 16px;");
+
         resumeStatusLabel = new Label("No resume selected");
         jobStatusLabel = new Label("No job description selected");
-        resultLabel = new Label("Match Score: --");
 
         chooseResumeBtn.setOnAction(e -> {
-           resumeFile = chooseFile(stage);
+            resumeFile = chooseFile(stage);
             if (resumeFile != null) {
-            resumeStatusLabel.setText("Resume selected ✅");
-}
+                resumeStatusLabel.setText("✅ " + resumeFile.getName());
+            }
         });
 
         chooseJobBtn.setOnAction(e -> {
             jobFile = chooseFile(stage);
-                if (jobFile != null) {
-                jobStatusLabel.setText("Job description selected ✅");
-}
+            if (jobFile != null) {
+                jobStatusLabel.setText("✅ " + jobFile.getName());
+            }
         });
 
         compareBtn.setOnAction(e -> {
@@ -55,19 +58,28 @@ public class ResumeMatchApp extends Application {
                 String resumeText = extractTextFromPDF(resumeFile);
                 String jobText = extractTextFromPDF(jobFile);
                 double score = matchScore(resumeText, jobText);
-                resultLabel.setText(String.format("Match Score: %.2f%%", score * 100));
+                String scoreText = String.format("Match Score: %.2f%%", score * 100);
+                resultLabel.setText(scoreText);
+
+                if (score >= 0.7) {
+                    resultLabel.setTextFill(Color.GREEN);
+                } else if (score >= 0.4) {
+                    resultLabel.setTextFill(Color.ORANGE);
+                } else {
+                    resultLabel.setTextFill(Color.RED);
+                }
             } else {
                 resultLabel.setText("Please select both PDF files.");
+                resultLabel.setTextFill(Color.BLACK);
             }
         });
 
         VBox root = new VBox(10,
-        chooseResumeBtn, resumeStatusLabel,
-        chooseJobBtn, jobStatusLabel,
-        compareBtn, resultLabel);
-
+                chooseResumeBtn, resumeStatusLabel,
+                chooseJobBtn, jobStatusLabel,
+                compareBtn, resultLabel);
         root.setPadding(new Insets(20));
-        stage.setScene(new Scene(root, 400, 200));
+        stage.setScene(new Scene(root, 450, 280));
         stage.show();
     }
 
@@ -87,25 +99,57 @@ public class ResumeMatchApp extends Application {
     }
 
     private double matchScore(String resume, String jobDescription) {
-        String[] stopWords = { "the", "and", "a", "an", "of", "to", "for", "in", "on", "with", "is", "at", "by", "from" };
-        Set<String> stopWordSet = new HashSet<>(Arrays.asList(stopWords));
+        String[] resumeTokens = resume.toLowerCase().split("\\W+");
+        String[] jobTokens = jobDescription.toLowerCase().split("\\W+");
 
-        Set<String> resumeWords = new HashSet<>();
-        for (String word : resume.toLowerCase().split("\\W+")) {
-            if (!stopWordSet.contains(word) && word.length() > 1) {
-                resumeWords.add(word);
-            }
+        Set<String> vocabSet = new HashSet<>();
+        vocabSet.addAll(Arrays.asList(resumeTokens));
+        vocabSet.addAll(Arrays.asList(jobTokens));
+        List<String> vocab = new ArrayList<>(vocabSet);
+
+        double[] resumeVector = toTFIDFVector(resumeTokens, jobTokens, vocab);
+        double[] jobVector = toTFIDFVector(jobTokens, resumeTokens, vocab);
+
+
+        return cosineSimilarity(resumeVector, jobVector);
+    }
+
+    private double[] toTFIDFVector(String[] tokens, String[] otherTokens, List<String> vocab) {
+    double[] vector = new double[vocab.size()];
+    Map<String, Integer> freq = new HashMap<>();
+
+    for (String token : tokens) {
+        freq.put(token, freq.getOrDefault(token, 0) + 1);
+    }
+
+    for (int i = 0; i < vocab.size(); i++) {
+        String term = vocab.get(i);
+        int tf = freq.getOrDefault(term, 0);
+
+        int docCount = 0;
+        if (termIn(tokens, term)) docCount++;
+        if (termIn(otherTokens, term)) docCount++;
+
+        double idf = Math.log(2.0 / (1.0 + docCount)); // Avoid division by 0
+        vector[i] = tf * idf;
+    }
+
+    return vector;
+}
+    private boolean termIn(String[] tokens, String term) {
+        for (String t : tokens) {
+            if (t.equals(term)) return true;
         }
+        return false;
+    }
 
-        String[] jobWords = jobDescription.toLowerCase().split("\\W+");
-        int matchCount = 0;
-
-        for (String word : jobWords) {
-            if (!stopWordSet.contains(word) && word.length() > 1 && resumeWords.contains(word)) {
-                matchCount++;
-            }
+    private double cosineSimilarity(double[] vec1, double[] vec2) {
+        double dot = 0, mag1 = 0, mag2 = 0;
+        for (int i = 0; i < vec1.length; i++) {
+            dot += vec1[i] * vec2[i];
+            mag1 += vec1[i] * vec1[i];
+            mag2 += vec2[i] * vec2[i];
         }
-
-        return (double) matchCount / jobWords.length;
+        return (mag1 == 0 || mag2 == 0) ? 0 : dot / (Math.sqrt(mag1) * Math.sqrt(mag2));
     }
 }
